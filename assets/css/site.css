@@ -157,10 +157,12 @@ button {
 .wordmark {
   font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 1.0625rem;
+  font-size: 1.25rem;
   letter-spacing: 0.24em;
   text-transform: uppercase;
-  margin: 0;
+  /* letter-spacing adds trailing space after the final letter; pull it back so
+     the measured width is the glyphs only, and the tagline aligns flush. */
+  margin: 0 -0.24em 0 0;
 }
 
 /* header ----------------------------------------------------------------- */
@@ -182,14 +184,23 @@ button {
 }
 
 .site-header__brand {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  /* Grid column is sized by the wordmark alone; the tagline is forced to match
+     it exactly (see below) so the lockup reads as one block at any font size. */
+  display: grid;
+  justify-items: start;
+  width: fit-content;
+  gap: 2px;
   line-height: 1;
 }
 .site-header__tagline {
-  font-size: 0.5625rem;
-  letter-spacing: 0.2em;
+  /* width:0 keeps the tagline out of intrinsic sizing, min-width:100% then
+     stretches it to the wordmark's width, and justification distributes the
+     word gaps to fill it. No magic numbers, no re-tuning when sizes change. */
+  width: 0;
+  min-width: 100%;
+  text-align: justify;
+  text-align-last: justify;
+  font-size: 0.625rem;
   text-transform: uppercase;
   color: var(--muted);
 }
