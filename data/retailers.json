@@ -1,0 +1,85 @@
+{
+  "$comment": "Retailer registry. Boughtique has no affiliate or commercial relationship with any retailer listed here. These are public storefronts we link to for discovery purposes only.",
+  "retailers": [
+    {
+      "id": "zalando",
+      "name": "Zalando",
+      "home": "https://www.zalando.co.uk/",
+      "country": "DE",
+      "positioning": "Europe's largest multi-brand fashion platform",
+      "description": "A broad European marketplace carrying thousands of mainstream and premium labels across womenswear, menswear and footwear.",
+      "price_band": "mid",
+      "affiliate_status": "none"
+    },
+    {
+      "id": "nike",
+      "name": "Nike",
+      "home": "https://www.nike.com/gb/",
+      "country": "US",
+      "positioning": "Performance and lifestyle sportswear",
+      "description": "First-party sportswear storefront with a permanently rotating sale section across footwear and apparel.",
+      "price_band": "mid",
+      "affiliate_status": "none"
+    },
+    {
+      "id": "adidas",
+      "name": "adidas",
+      "home": "https://www.adidas.co.uk/",
+      "country": "DE",
+      "positioning": "Sportswear and originals",
+      "description": "German sportswear house. The outlet section is one of the more reliable sources of genuine footwear markdowns in Europe.",
+      "price_band": "mid",
+      "affiliate_status": "none"
+    },
+    {
+      "id": "arket",
+      "name": "ARKET",
+      "home": "https://www.arket.com/en-eu/",
+      "country": "SE",
+      "positioning": "Modern-day market for essentials",
+      "description": "Scandinavian essentials with a durable, material-led point of view. Strong for outerwear and knitwear.",
+      "price_band": "mid",
+      "affiliate_status": "none"
+    },
+    {
+      "id": "cos",
+      "name": "COS",
+      "home": "https://www.cos.com/en-eu/",
+      "country": "SE",
+      "positioning": "Modern, functional, considered design",
+      "description": "Architectural minimalism at contemporary prices. A reference point for clean tailoring and volume.",
+      "price_band": "mid",
+      "affiliate_status": "none"
+    },
+    {
+      "id": "uniqlo",
+      "name": "UNIQLO",
+      "home": "https://www.uniqlo.com/uk/en/",
+      "country": "JP",
+      "positioning": "LifeWear — engineered everyday basics",
+      "description": "Japanese basics engineered for repeat wear. The best value-per-wear in the mainstream market.",
+      "price_band": "value",
+      "affiliate_status": "none"
+    },
+    {
+      "id": "mytheresa",
+      "name": "Mytheresa",
+      "home": "https://www.mytheresa.com/en-de/",
+      "country": "DE",
+      "positioning": "Curated luxury",
+      "description": "Munich-based luxury retailer with a tightly edited designer buy and a serious seasonal sale.",
+      "price_band": "luxury",
+      "affiliate_status": "none"
+    },
+    {
+      "id": "farfetch",
+      "name": "Farfetch",
+      "home": "https://www.farfetch.com/uk/",
+      "country": "GB",
+      "positioning": "Global luxury marketplace",
+      "description": "Aggregates boutiques worldwide, which makes it the widest — and most uneven — luxury price surface in Europe.",
+      "price_band": "luxury",
+      "affiliate_status": "none"
+    }
+  ]
+}
