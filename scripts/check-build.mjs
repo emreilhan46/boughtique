@@ -1,346 +1,155 @@
-import { track, observeImpressions } from './analytics.js';
-import * as saved from './store.js';
-
-/* ------------------------------------------------------------------ utils */
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const debounce = (fn, ms = 120) => {
-  let t;
-  return (...a) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...a), ms);
-  };
-};
-
 /**
- * Catalogue access. Today: a static JSON artifact emitted by the build.
- * Tomorrow: `GET https://api.boughtique.com/v1/items`. Same shape, same callers.
- */
-let catalogPromise = null;
-const getCatalog = () => {
-  if (!catalogPromise) {
-    catalogPromise = fetch('/api/catalog.json', { headers: { accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d) => d.items || [])
-      .catch(() => []);
-  }
-  return catalogPromise;
-};
-
-/**
- * Relevance scoring.
+ * Build verification. Runs against dist/ and fails the build on real problems.
  *
- * Strict AND over all tokens is the primary match. If that returns nothing we
- * fall back to partial matches ranked by how many tokens hit, so a plausible
- * query like "minimal jacket" never dead-ends on an empty page. The UI always
- * says which mode produced the results.
+ *   npm test
  */
-const tokenize = (q) =>
-  q
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s€]/gu, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
 
-function score(hay, tokens) {
-  let hits = 0;
-  for (const t of tokens) if (hay.includes(t)) hits += 1;
-  return hits;
+import { readFile, readdir, stat } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DIST = path.join(ROOT, 'dist');
+const HOST = 'https://boughtique.com';
+
+const errors = [];
+const warnings = [];
+const fail = (f, m) => errors.push(`${f}: ${m}`);
+const warn = (f, m) => warnings.push(`${f}: ${m}`);
+
+async function walk(dir, out = []) {
+  for (const entry of await readdir(dir)) {
+    const p = path.join(dir, entry);
+    if ((await stat(p)).isDirectory()) await walk(p, out);
+    else out.push(p);
+  }
+  return out;
 }
 
-/** @returns {{list: T[], exact: boolean}} */
-function rank(items, query, getHay) {
-  const tokens = tokenize(query);
-  if (!tokens.length) return { list: items, exact: true };
+const exists = async (p) => {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
-  const scored = items.map((item) => ({ item, s: score(getHay(item), tokens) }));
-  const exact = scored.filter((x) => x.s === tokens.length);
-  if (exact.length) return { list: exact.map((x) => x.item), exact: true };
+const all = await walk(DIST);
+const htmlFiles = all.filter((f) => f.endsWith('.html'));
+const rel = (f) => path.relative(DIST, f);
 
-  const partial = scored.filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
-  return { list: partial.map((x) => x.item), exact: false };
+if (!htmlFiles.length) fail('dist', 'no HTML produced');
+
+for (const f of ['robots.txt', 'sitemap.xml', 'favicon.svg', '404.html', 'CNAME', 'site.webmanifest', 'api/catalog.json', 'assets/img/og.png']) {
+  if (!(await exists(path.join(DIST, f)))) fail(f, 'missing from dist/');
 }
 
-/* ----------------------------------------------------------- mobile menu */
-function initMenu() {
-  const btn = $('[data-menu-toggle]');
-  const nav = $('#mobile-nav');
-  if (!btn || !nav) return;
-  btn.addEventListener('click', () => {
-    const open = btn.getAttribute('aria-expanded') === 'true';
-    btn.setAttribute('aria-expanded', String(!open));
-    btn.setAttribute('aria-label', open ? 'Open menu' : 'Close menu');
-    nav.hidden = open;
-  });
-}
+const cname = await readFile(path.join(DIST, 'CNAME'), 'utf8').catch(() => '');
+if (cname.trim() !== 'boughtique.com') fail('CNAME', `expected boughtique.com, got "${cname.trim()}"`);
 
-/* --------------------------------------------------------- search overlay */
-function initSearchOverlay() {
-  const overlay = $('[data-search-overlay]');
-  const input = $('[data-search-input]');
-  const results = $('[data-search-results]');
-  if (!overlay || !input) return;
+/* ------------------------------------------------------------------ pages */
+for (const file of htmlFiles) {
+  const html = await readFile(file, 'utf8');
+  const name = rel(file);
 
-  const open = () => {
-    overlay.hidden = false;
-    input.focus();
-    getCatalog();
-  };
-  const close = () => {
-    overlay.hidden = true;
-    results.innerHTML = '';
-  };
+  const title = html.match(/<title>([^<]*)<\/title>/)?.[1];
+  if (!title) fail(name, 'missing <title>');
+  else if (title.length > 65) warn(name, `title is ${title.length} chars (>65)`);
 
-  $$('[data-search-open]').forEach((b) => b.addEventListener('click', () => (overlay.hidden ? open() : close())));
-  $('[data-search-close]')?.addEventListener('click', close);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !overlay.hidden) close();
-    if (e.key === '/' && document.activeElement === document.body) {
-      e.preventDefault();
-      open();
+  const desc = html.match(/<meta name="description" content="([^"]*)"/)?.[1];
+  if (!desc) fail(name, 'missing meta description');
+  else if (desc.length > 170) warn(name, `meta description is ${desc.length} chars (>170)`);
+
+  const canonical = html.match(/<link rel="canonical" href="([^"]*)"/)?.[1];
+  if (!canonical) fail(name, 'missing canonical');
+  else if (!canonical.startsWith(HOST)) fail(name, `canonical not on ${HOST}: ${canonical}`);
+
+  const h1s = html.match(/<h1[\s>]/g) || [];
+  if (h1s.length !== 1) fail(name, `expected exactly 1 <h1>, found ${h1s.length}`);
+
+  if (!/<meta property="og:image" content="https:\/\//.test(html)) fail(name, 'missing absolute og:image');
+  if (!/<script type="application\/ld\+json">/.test(html)) warn(name, 'no structured data');
+
+  for (const img of html.match(/<img\b[^>]*>/g) || []) {
+    if (!/\salt=/.test(img)) fail(name, `<img> without alt: ${img.slice(0, 90)}`);
+  }
+
+  for (const a of html.match(/<a\b[^>]*>/g) || []) {
+    const href = a.match(/href="([^"]*)"/)?.[1];
+    if (!href) {
+      fail(name, `<a> without href: ${a.slice(0, 80)}`);
+      continue;
     }
-  });
-
-  const render = debounce(async () => {
-    const q = input.value.trim();
-    if (q.length < 2) {
-      results.innerHTML = '';
-      return;
+    if (/^https?:\/\//.test(href)) {
+      if (href.startsWith(HOST)) continue;
+      if (!/target="_blank"/.test(a)) fail(name, `external link without target=_blank: ${href}`);
+      if (!/rel="[^"]*noopener/.test(a)) fail(name, `external link without rel=noopener: ${href}`);
+      if (/[?&](tag|aff|affid|utm_source=boughtique)=/.test(href))
+        fail(name, `link carries affiliate/tracking params but we have no affiliate relationship: ${href}`);
+      continue;
     }
-    const items = await getCatalog();
-    const { list, exact } = rank(items, q, (i) => i.search_text || '');
-    const hits = list.slice(0, 8);
-    track('search', { query: q, results: list.length, exact, surface: 'overlay' });
-
-    results.innerHTML = hits.length
-      ? (exact ? '' : `<p class="search-overlay__empty" style="margin-bottom:.75rem">No exact match for “${escapeHtml(
-          q
-        )}”. Closest finds:</p>`) +
-        `<ul>${hits
-          .map(
-            (i) =>
-              `<li><a href="${i.url}" target="_blank" rel="noopener noreferrer nofollow sponsored" data-outbound="${i.retailer.id}" data-outbound-id="${i.id}">` +
-              `<span>${escapeHtml(i.title)}</span>` +
-              `<span class="r-meta">${escapeHtml(i.retailer.name)}${i.deal ? ' · Sale' : ''}</span></a></li>`
-          )
-          .join('')}</ul>` +
-        `<p class="search-overlay__empty" style="margin-top:.75rem"><a href="/search/?q=${encodeURIComponent(
-          q
-        )}">See all results for “${escapeHtml(q)}”</a></p>`
-      : `<p class="search-overlay__empty">No matches for “${escapeHtml(
-          q
-        )}”. Try <a href="/sneakers/">sneakers</a>, <a href="/deals/">deals</a> or <a href="/under-100/">under €100</a>.</p>`;
-  }, 140);
-
-  input.addEventListener('input', render);
-}
-
-const escapeHtml = (s) =>
-  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-/* ---------------------------------------------------------------- filters */
-function initFilters() {
-  const form = $('[data-filters]');
-  const gridEl = $('[data-grid]');
-  if (!form || !gridEl) return;
-
-  const cards = $$('[data-item]', gridEl);
-  const countEl = $('[data-result-count]');
-  const noteEl = $('[data-result-note]');
-  const controls = $$('[data-filter]', form);
-
-  const state = () => {
-    const s = {};
-    controls.forEach((c) => {
-      s[c.dataset.filter] = c.type === 'checkbox' ? c.checked : c.value.trim();
-    });
-    return s;
-  };
-
-  const apply = () => {
-    const s = state();
-    const q = (s.q || '').trim();
-    const tokens = tokenize(q);
-
-    // Non-text facets first; text relevance is applied to whatever survives.
-    const facetOk = (d) =>
-      (!s.gender || d.gender === s.gender || d.gender === 'unisex') &&
-      (!s.retailer || d.retailer === s.retailer) &&
-      (!s.band || d.band === s.band) &&
-      (!s.style || d.style.split(' ').includes(s.style)) &&
-      (!s.deal || d.deal === 'true');
-
-    const pool = cards.filter((c) => facetOk(c.dataset));
-    let show;
-    let exact = true;
-
-    if (!tokens.length) {
-      show = new Set(pool);
-    } else {
-      const scored = pool.map((c) => ({ c, s: score(c.dataset.search, tokens) }));
-      const hits = scored.filter((x) => x.s === tokens.length);
-      exact = hits.length > 0;
-      show = new Set((exact ? hits : scored.filter((x) => x.s > 0)).map((x) => x.c));
+    if (href.startsWith('mailto:') || href.startsWith('#')) continue;
+    if (!href.startsWith('/')) {
+      fail(name, `relative link (use root-absolute): ${href}`);
+      continue;
     }
+    const clean = href.split('#')[0].split('?')[0];
+    const target = clean.endsWith('/') ? path.join(DIST, clean, 'index.html') : path.join(DIST, clean);
+    if (!(await exists(target))) fail(name, `broken internal link: ${href}`);
+  }
 
-    cards.forEach((card) => {
-      card.hidden = !show.has(card);
-    });
-
-    const visible = show.size;
-    if (countEl) countEl.textContent = `${visible} of ${cards.length}`;
-
-    const active = Object.entries(s).filter(([, v]) => v);
-    if (active.length) {
-      track(tokens.length ? 'search' : 'filter', {
-        filters: Object.fromEntries(active),
-        results: visible,
-        exact,
-      });
-    }
-
-    let empty = $('.empty', gridEl.parentElement);
-    if (!visible) {
-      if (!empty) {
-        empty = document.createElement('p');
-        empty.className = 'empty';
-        gridEl.parentElement.appendChild(empty);
-      }
-      empty.textContent = q
-        ? `Nothing matches “${q}”. Try a broader term, or reset the filters.`
-        : 'No matches. Try removing a filter.';
-      empty.hidden = false;
-    } else if (empty) {
-      empty.hidden = true;
-    }
-
-    if (noteEl) {
-      noteEl.hidden = exact || !visible;
-      if (!exact && visible) noteEl.textContent = `No exact match for “${q}” — showing closest finds.`;
-    }
-  };
-
-  const debounced = debounce(apply, 120);
-  controls.forEach((c) => c.addEventListener(c.tagName === 'SELECT' || c.type === 'checkbox' ? 'change' : 'input', debounced));
-
-  $('[data-filters-reset]')?.addEventListener('click', () => {
-    controls.forEach((c) => {
-      if (c.type === 'checkbox') c.checked = false;
-      else c.value = '';
-    });
-    apply();
-    const url = new URL(location.href);
-    url.search = '';
-    history.replaceState(null, '', url);
-  });
-
-  // Deep-link support: /search/?q=… and ?gender=…&deal=1
-  const params = new URLSearchParams(location.search);
-  let seeded = false;
-  controls.forEach((c) => {
-    const v = params.get(c.dataset.filter);
-    if (v === null) return;
-    if (c.type === 'checkbox') c.checked = v === '1' || v === 'true';
-    else c.value = v;
-    seeded = true;
-  });
-  if (seeded) track('search', { query: params.get('q') || '', surface: 'page' });
-  apply();
+  const text = html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, ' ');
+  const priceClaim = text.match(/(?:€|£|\$)\s?\d[\d.,]*/g) || [];
+  const allowed = new Set(['€100']);
+  for (const p of priceClaim) {
+    const norm = p.replace(/\s/g, '').replace(/[.,]+$/, '');
+    if (!allowed.has(norm)) fail(name, `unverified price claim in copy: "${p}"`);
+  }
+  const discountClaim = text.match(/\b\d{1,2}%\s?(off|reduced|discount)/gi) || [];
+  if (discountClaim.length) fail(name, `unverified discount claim: ${discountClaim.join(', ')}`);
 }
 
-/* ------------------------------------------------------------ saved items */
-function initSaveButtons(root = document) {
-  const ids = new Set(saved.getSaved());
-  $$('[data-save]', root).forEach((btn) => {
-    const id = btn.dataset.save;
-    btn.setAttribute('aria-pressed', String(ids.has(id)));
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      btn.setAttribute('aria-pressed', String(saved.toggle(id)));
-    });
-  });
+/* ---------------------------------------------------------------- sitemap */
+const sitemap = await readFile(path.join(DIST, 'sitemap.xml'), 'utf8').catch(() => '');
+const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+if (locs.length < 10) fail('sitemap.xml', `only ${locs.length} URLs`);
+for (const loc of locs) {
+  const p = loc.replace(HOST, '');
+  const target = p === '/' ? path.join(DIST, 'index.html') : path.join(DIST, p, 'index.html');
+  if (!(await exists(target))) fail('sitemap.xml', `lists non-existent page: ${loc}`);
 }
+if (/\/saved\//.test(sitemap)) fail('sitemap.xml', 'noindex page /saved/ is listed');
 
-function initSavedBadge() {
-  const badge = $('[data-saved-count]');
-  if (!badge) return;
-  saved.subscribe((ids) => {
-    badge.textContent = String(ids.length);
-    badge.hidden = ids.length === 0;
-  });
+/* ---------------------------------------------------------------- catalog */
+const catalog = JSON.parse(await readFile(path.join(DIST, 'api/catalog.json'), 'utf8'));
+if (!catalog.items?.length) fail('api/catalog.json', 'empty');
+for (const item of catalog.items || []) {
+  for (const k of ['id', 'retailer', 'title', 'description', 'url', 'search_text']) {
+    if (!item[k]) fail('api/catalog.json', `item ${item.id} missing ${k}`);
+  }
+  if (!/^https:\/\//.test(item.url)) fail('api/catalog.json', `item ${item.id} url not https`);
+  if ('current_price' in item || 'discount_percentage' in item)
+    fail('api/catalog.json', `item ${item.id} asserts price data we cannot verify`);
 }
+const ids = catalog.items.map((i) => i.id);
+if (new Set(ids).size !== ids.length) fail('api/catalog.json', 'duplicate item ids');
 
-async function initSavedPage() {
-  const mount = $('[data-saved-mount]');
-  if (!mount) return;
-  const items = await getCatalog();
-  const byId = new Map(items.map((i) => [i.id, i]));
+/* ----------------------------------------------------------------- report */
+const kb = (n) => `${(n / 1024).toFixed(1)} kB`;
+const totals = await Promise.all(all.map(async (f) => (await stat(f)).size));
+console.log(
+  `Checked ${htmlFiles.length} pages, ${all.length} files, ${kb(totals.reduce((a, b) => a + b, 0))} total.`
+);
+console.log(`Catalogue: ${catalog.items.length} items. Sitemap: ${locs.length} URLs.`);
 
-  const render = (ids) => {
-    const list = ids.map((id) => byId.get(id)).filter(Boolean);
-    if (!list.length) {
-      mount.innerHTML = `<div class="saved-empty"><p class="lede">You haven't saved anything yet. Tap the bookmark on any discovery to keep it here.</p>
-        <div class="hero__actions"><a class="btn btn--primary" href="/deals/">Browse deals</a><a class="btn btn--ghost" href="/women/">Explore new finds</a></div></div>`;
-      return;
-    }
-    mount.innerHTML =
-      `<p class="filters__count" style="margin-bottom:1.5rem">${list.length} saved</p><div class="grid">` +
-      list
-        .map(
-          (i) => `<article class="card" data-item data-id="${i.id}">
-        <div class="card__media">
-          <img src="${i.image}" alt="" role="presentation" width="800" height="1000" loading="lazy" decoding="async">
-          ${i.deal ? '<span class="card__flag">Sale section</span>' : ''}
-          <button class="save-btn" type="button" data-save="${i.id}" aria-pressed="true" aria-label="Remove ${escapeHtml(
-            i.title
-          )} from saved"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h12v17l-6-4.3-6 4.3z"/></svg></button>
-        </div>
-        <div class="card__body">
-          <p class="card__eyebrow">${escapeHtml(i.retailer.name)}</p>
-          <h3 class="card__title"><a class="card__link" href="${i.url}" target="_blank" rel="noopener noreferrer nofollow sponsored" data-outbound="${
-            i.retailer.id
-          }" data-outbound-id="${i.id}">${escapeHtml(i.title)}</a></h3>
-          <p class="card__desc">${escapeHtml(i.description)}</p>
-        </div>
-      </article>`
-        )
-        .join('') +
-      '</div>';
-    initSaveButtons(mount);
-  };
-
-  saved.subscribe(render);
+if (warnings.length) {
+  console.log(`\n${warnings.length} warning(s):`);
+  warnings.forEach((w) => console.log(`  ! ${w}`));
 }
-
-/* ---------------------------------------------------------- outbound taps */
-function initOutbound() {
-  document.addEventListener(
-    'click',
-    (e) => {
-      const a = e.target.closest('a[data-outbound]');
-      if (!a) return;
-      track('outbound_click', {
-        retailer: a.dataset.outbound,
-        id: a.dataset.outboundId || null,
-        href: a.href,
-      });
-    },
-    { capture: true }
-  );
+if (errors.length) {
+  console.error(`\n${errors.length} error(s):`);
+  errors.forEach((e) => console.error(`  ✗ ${e}`));
+  process.exit(1);
 }
-
-/* -------------------------------------------------------------------- init */
-function boot() {
-  initMenu();
-  initSearchOverlay();
-  initFilters();
-  initSaveButtons();
-  initSavedBadge();
-  initSavedPage();
-  initOutbound();
-  observeImpressions();
-  track('page_view', { title: document.title });
-}
-
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-else boot();
+console.log('\nAll checks passed.');
