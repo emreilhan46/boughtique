@@ -1,0 +1,19 @@
+{
+  "name": "boughtique",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Boughtique — Fashion Deals Discovery. Static discovery engine, zero runtime dependencies.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node src/build.mjs",
+    "art": "node scripts/generate-art.mjs",
+    "raster": "npm i --no-save sharp && node scripts/generate-raster.mjs",
+    "dev": "node src/build.mjs && node scripts/serve.mjs",
+    "serve": "node scripts/serve.mjs",
+    "check:links": "node scripts/check-links.mjs",
+    "check:html": "node scripts/check-build.mjs",
+    "test": "node src/build.mjs && node scripts/check-build.mjs"
+  },
+  "license": "UNLICENSED"
+}
