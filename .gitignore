@@ -1,0 +1,29 @@
+# Build output
+dist/
+
+# Artwork is generated into dist/ at build time, never committed
+assets/img/
+favicon.svg
+
+# Dependencies (the project has none, but keep tooling noise out)
+node_modules/
+package-lock.json
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+*.log
+npm-debug.log*
+
+# Future ingestion scratch space
+.cache/
+tmp/
+data/raw/
