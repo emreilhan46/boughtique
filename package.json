@@ -8,7 +8,7 @@
   "scripts": {
     "build": "node src/build.mjs",
     "art": "node scripts/generate-art.mjs",
-    "raster": "npm i --no-save sharp && node scripts/generate-raster.mjs",
+    "raster": "npm run build && npm i --no-save sharp && node scripts/generate-raster.mjs",
     "dev": "node src/build.mjs && node scripts/serve.mjs",
     "serve": "node scripts/serve.mjs",
     "check:links": "node scripts/check-links.mjs",
